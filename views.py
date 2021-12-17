@@ -1,95 +1,83 @@
-from rest_framework import permissions, status
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from django.core.mail import EmailMessage
-from django.conf import settings
-from django.shortcuts import get_object_or_404
+from django.shortcuts import render,redirect
+from Users.forms import CustomerForm,SignInForm
+from django.http import HttpResponseRedirect
+from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Q
+from django.urls import reverse
+from django.contrib.auth import login,logout
 from django.contrib.auth.models import User
-from .models import Contact, MassEmail
-from .utils import get_client_ip
-from .serializers import ContactSerializer
+from Users.models import Customer
+from Coins.models import Coin
 
 
-class CreateForm(APIView):
-	permission_classes = (permissions.AllowAny, )
-
-	def post(self, request, format=None):
-		required_fields = ["name", "email", "text"]
-		for field in required_fields:
-			if field not in request.data:
-				return Response(
-					status=status.HTTP_400_BAD_REQUEST,
-					data={"detail": "{} is required".format(field)})
-
-		ip = get_client_ip(request)
-		contact = Contact.objects.create(
-			name=request.data["name"],
-			email=request.data["email"],
-			text=request.data["text"]
-		)
-		contact.ip = ip
-		if "subject" in request.data:
-			contact.subject = request.data["subject"]
-		if "phone_number" in request.data:
-			contact.phone_number = request.data["phone_number"]
-		if "address" in request.data:
-			contact.address = request.data["address"]
-
-		contact.save()
-		admin_name = list(User.objects.filter(is_superuser=True, is_staff=True).values_list("first_name", flat=True))[0]
-		mail_subject = "{0} Contact Us ".format(settings.APP_NAME)
-		message = "dear '{0}',\n we got your email. we will response as soon as possible.\n\nBest Regards '{1}'".format(contact.name, admin_name)
-		to_email = contact.email
-		EmailMessage(mail_subject, message, to=[to_email]).send()
-
-		return Response(status=status.HTTP_200_OK, data={"detail": "form created."})
+from django.contrib.auth.decorators import login_required
 
 
-class AdminContactReader(APIView):
-	permission_classes = (permissions.IsAdminUser, )
 
-	def get(self, request, year=None, month=None, format=None):
-		contacts = Contact.objects.all()
-		if all([year, month]):
-			contacts = Contact.objects.filter(datetime__year=year, datetime__month=month)
-		serializer = ContactSerializer(instance=contacts, many=True)
-		return Response(status=status.HTTP_200_OK, data=serializer.data)
+# Create your views here.
+
+def SignUpController(request):
+	if request.method == "POST":
+		post_form = CustomerForm(request.POST)
+		if post_form.is_valid():
+			cd = post_form.cleaned_data
+			user = User.objects.create_user(username=cd['username'],
+			        						password=cd['password'],
+			      				  			first_name = cd['first_name'],
+			        						last_name=cd['last_name'],
+			        						email=cd['email'])
+			Customer.objects.create(user=user)
+			login(request,user)
+			request.session["new"] = True
+			return HttpResponseRedirect(reverse('Users:home-page'))
+		else:
+			return render(request,'Users/sign_up.html',{'form':post_form})
+	else:
+		form = CustomerForm()
+		return render(request,'Users/sign_up.html',
+                          {'form':form})
 
 
-class AdminEditIsReaded(APIView):
-	permission_classes = (permissions.IsAdminUser, )
+def SignInController(request):
+	if request.method == "POST":
+		post_form = SignInForm(request.POST)
+		if post_form.is_valid():
+			cd = post_form.cleaned_data
+			user = User.objects.get(email=cd['email'])
+			checker = user.check_password(cd['password']) 
+			if checker:
+				login(request, user)
+				return HttpResponseRedirect(reverse('Users:home-page'))
+			else:
+				post_form.add_error('email','Email and password did not match')
+				return render(request,'Users/sign_in.html',
+                        {'form':post_form})
+		else:
+			return render(request,'Users/sign_in.html',
+                          {'form':post_form})
+	else:
+		if request.user.is_authenticated:
+			return HttpResponseRedirect(reverse('Users:home-page'))
+		form = SignInForm()
+		return render(request,'Users/sign_in.html',
+                          {'form':form})
+def LogOutController(request):
+	logout(request)
+	return HttpResponseRedirect(reverse('Users:sign-in'))
+		
+@login_required
+def HomePageController(request):
+	customer = request.user.customer
+	coin=Coin.objects.get(name="MillionToken")
+	try:
+		bid = customer.bid
+	except ObjectDoesNotExist:
+		bid = False
 
-	def put(self, request, key, format=None):
-		contact = get_object_or_404(Contact, key=key)
-		if "is_readed" not in request.data:
-			return Response(
-				status=status.HTTP_400_BAD_REQUEST,
-				data={"detail": "'is_readed' field not provided."})
-
-		contact.is_readed = request.data["is_readed"]
-		contact.save()
-		return Response(status=status.HTTP_200_OK, data={"detail": "updated"})
+	return render(request,'Users/home_page.html',
+											{'coin':coin,
+											'bid':bid})
 
 
-class AdminSendMassEmail(APIView):
-	permission_classes = (permissions.IsAdminUser, )
-
-	def post(self, request, format=None):
-		fields = ["subject", "text"]
-		for field in fields:
-			if field not in request:
-				return Response(
-					status=status.HTTP_400_BAD_REQUEST,
-					data={"detail": "field '{0}' not provided.".format(field)})
-
-		email = MassEmail.objects.create(subject=request.data["subject"], text=request.data["text"])
-		if "name" in request.data:
-			email.name = request.data["name"]
-		email.save()
-		mail_subject = request.data["subject"]
-		message = request.data["text"]
-		all_emails = list(Contact.objects.all().values_list("email", flat=True))
-		EmailMessage(mail_subject, message, to=all_emails).send()
-		return Response(
-			status=status.HTTP_200_OK,
-			data={"detail": "mass email sent.", "emails": all_emails})
+def HomeRedirectController(request):
+	return HttpResponseRedirect(reverse('Users:sign-in'))

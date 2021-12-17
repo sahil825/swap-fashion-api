@@ -1,11 +1,14 @@
-from django.urls import path
-from .views import CreateForm, AdminContactReader, AdminSendMassEmail
+from django.urls import path,re_path
+from Users.views import SignUpController,SignInController,HomePageController,LogOutController
 
-app_name = "contact"
 
+
+app_name='Users'
 urlpatterns = [
-	path("", CreateForm.as_view()),
-	path("admin/contact/", AdminContactReader.as_view()),
-	path("admin/contact/<int:year>/<int:month>/", AdminContactReader.as_view()),
-	path("admin/mass_mail/", AdminSendMassEmail.as_view()),
-]
+    re_path(r'^sign-in/$', SignInController, name='sign-in'),
+    re_path(r'^sign-up/$', SignUpController, name='sign-up' ),
+    re_path(r'^home-page/$',  HomePageController, name='home-page'),
+    re_path(r'^log-out/$',  LogOutController, name='log-out'),
+
+    
+    ]
