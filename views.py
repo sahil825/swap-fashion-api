@@ -1,67 +1,83 @@
-from django.shortcuts import render
-from Users.models import Customer
-from Bid.models import Bid, SuccessfulBid, UnsuccessfulBid
-from Bid.forms import BidForm
-from Coins.models import Coin
-from django.contrib.auth.decorators import login_required
-from datetime import datetime
+from django.shortcuts import render,redirect
+from Users.forms import CustomerForm,SignInForm
 from django.http import HttpResponseRedirect
-from django.urls import reverse
 from django.core.exceptions import ObjectDoesNotExist
-from datetime import datetime,timedelta
-from Bid import allocate
+from django.db.models import Q
+from django.urls import reverse
+from django.contrib.auth import login,logout
+from django.contrib.auth.models import User
+from Users.models import Customer
+from Coins.models import Coin
+
+
+from django.contrib.auth.decorators import login_required
 
 
 
 # Create your views here.
-@login_required
-def CreateController(request):
-	user = request.user
-	coin = Coin.objects.get(name="SwapToken")
-	# load after one minute of bid
-	coin.end_bid_time = datetime.now() + timedelta(seconds=30)
-	coin.save()
 
-
+def SignUpController(request):
 	if request.method == "POST":
-		post_form = BidForm(request.POST)
+		post_form = CustomerForm(request.POST)
 		if post_form.is_valid():
 			cd = post_form.cleaned_data
-			found = Bid.objects.filter(customer = user.customer).exists()
-			if not found:
-				bid = Bid.objects.create(number_of_tokens=cd['number_of_tokens'],
-				        				price_per_token = cd['price_per_token'],
-				      				  	timestamp = datetime.now(),
-				      				  	customer=user.customer)
-
-
-				# I used a scheduler previously but for ease of testing,i'll just call it immediately
-				allocate.run()
-
+			user = User.objects.create_user(username=cd['username'],
+			        						password=cd['password'],
+			      				  			first_name = cd['first_name'],
+			        						last_name=cd['last_name'],
+			        						email=cd['email'])
+			Customer.objects.create(user=user)
+			login(request,user)
+			request.session["new"] = True
 			return HttpResponseRedirect(reverse('Users:home-page'))
 		else:
-			return render(request,'Bid/create.html',{'form':post_form,coin:coin})
+			return render(request,'Users/sign_up.html',{'form':post_form})
 	else:
-		form = BidForm()
-		return render(request,'Bid/create.html',
-                          {'form':form,'coin':coin})
-@login_required
-def DeleteController(request):
-	user = request.user
-	try:
-		bid = Bid.objects.get(customer = user.customer)
+		form = CustomerForm()
+		return render(request,'Users/sign_up.html',
+                          {'form':form})
 
-		# if not bid.processed:
-		# 	bid.delete()
-		# else:
-		# 	request.session["message"] = "Could alter or delete bid because it has already been processed"
+
+def SignInController(request):
+	if request.method == "POST":
+		post_form = SignInForm(request.POST)
+		if post_form.is_valid():
+			cd = post_form.cleaned_data
+			user = User.objects.get(email=cd['email'])
+			checker = user.check_password(cd['password']) 
+			if checker:
+				login(request, user)
+				return HttpResponseRedirect(reverse('Users:home-page'))
+			else:
+				post_form.add_error('email','Email and password did not match')
+				return render(request,'Users/sign_in.html',
+                        {'form':post_form})
+		else:
+			return render(request,'Users/sign_in.html',
+                          {'form':post_form})
+	else:
+		if request.user.is_authenticated:
+			return HttpResponseRedirect(reverse('Users:home-page'))
+		form = SignInForm()
+		return render(request,'Users/sign_in.html',
+                          {'form':form})
+def LogOutController(request):
+	logout(request)
+	return HttpResponseRedirect(reverse('Users:sign-in'))
 		
-		try:
-			UnsuccessfulBid.objects.get(customer=bid.customer).delete()
-		except ObjectDoesNotExist:
-			pass
-		bid.delete() # successful bid gets deleted auto
+@login_required
+def HomePageController(request):
+	customer = request.user.customer
+	coin=Coin.objects.get(name="MillionToken")
+	try:
+		bid = customer.bid
 	except ObjectDoesNotExist:
-		pass
-	return HttpResponseRedirect(reverse('Users:home-page'))
-		
+		bid = False
+
+	return render(request,'Users/home_page.html',
+											{'coin':coin,
+											'bid':bid})
+
+
+def HomeRedirectController(request):
+	return HttpResponseRedirect(reverse('Users:sign-in'))
